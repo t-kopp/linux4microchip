@@ -820,7 +820,7 @@ int spi_register_board_info(struct spi_board_info const *info, unsigned n)
 
 static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
 {
-	bool enable1 = enable;
+	bool activate = enable;
 
 	/*
 	 * Avoid calling into the driver (or doing delays) if the chip select
@@ -835,7 +835,7 @@ static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
 
 	if (spi->cs_gpiod || gpio_is_valid(spi->cs_gpio) ||
 	    !spi->controller->set_cs_timing) {
-		if (enable1)
+		if (activate)
 			spi_delay_exec(&spi->controller->cs_setup, NULL);
 		else
 			spi_delay_exec(&spi->controller->cs_hold, NULL);
@@ -861,7 +861,7 @@ static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
 					gpiod_set_value_cansleep(spi->cs_gpiod, !enable);
 				else
 					/* Polarity handled by GPIO library */
-					gpiod_set_value_cansleep(spi->cs_gpiod, enable1);
+					gpiod_set_value_cansleep(spi->cs_gpiod, activate);
 			} else {
 				/*
 				 * invert the enable line, as active low is
@@ -880,7 +880,7 @@ static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
 
 	if (spi->cs_gpiod || gpio_is_valid(spi->cs_gpio) ||
 	    !spi->controller->set_cs_timing) {
-		if (!enable1)
+		if (!activate)
 			spi_delay_exec(&spi->controller->cs_inactive, NULL);
 	}
 }
