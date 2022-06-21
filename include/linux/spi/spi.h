@@ -380,8 +380,6 @@ extern struct spi_device *spi_new_ancillary_device(struct spi_device *spi, u8 ch
  * @queue: message queue
  * @idling: the device is entering idle state
  * @cur_msg: the currently in-flight message
- * @cur_msg_prepared: spi_prepare_message was called for the currently
- *                    in-flight message
  * @cur_msg_mapped: message has been mapped for DMA
  * @last_cs_enable: was enable true on the last call to set_cs.
  * @last_cs_mode_high: was (mode & SPI_CS_HIGH) true on the last call to set_cs.
@@ -614,7 +612,6 @@ struct spi_controller {
 	bool				running;
 	bool				rt;
 	bool				auto_runtime_pm;
-	bool                            cur_msg_prepared;
 	bool				cur_msg_mapped;
 	bool				last_cs_enable;
 	bool				last_cs_mode_high;
@@ -978,6 +975,7 @@ struct spi_transfer {
  * @queue: for use by whichever driver currently owns the message
  * @state: for use by whichever driver currently owns the message
  * @resources: for resource management when the spi message is processed
+ * @prepared: spi_prepare_message was called for the this message
  *
  * A @spi_message is used to execute an atomic sequence of data transfers,
  * each represented by a struct spi_transfer.  The sequence is "atomic"
@@ -1027,6 +1025,9 @@ struct spi_message {
 
 	/* list of spi_res reources when the spi message is processed */
 	struct list_head        resources;
+
+	/* spi_prepare_message was called for this message */
+	bool                    prepared;
 };
 
 static inline void spi_message_init_no_memset(struct spi_message *m)
