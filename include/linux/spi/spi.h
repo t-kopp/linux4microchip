@@ -378,7 +378,6 @@ extern struct spi_device *spi_new_ancillary_device(struct spi_device *spi, u8 ch
  * @pump_messages: work struct for scheduling work to the message pump
  * @queue_lock: spinlock to syncronise access to message queue
  * @queue: message queue
- * @idling: the device is entering idle state
  * @cur_msg: the currently in-flight message
  * @cur_msg_mapped: message has been mapped for DMA
  * @last_cs_enable: was enable true on the last call to set_cs.
@@ -609,7 +608,6 @@ struct spi_controller {
 	spinlock_t			queue_lock;
 	struct list_head		queue;
 	struct spi_message		*cur_msg;
-	bool				idling;
 	bool				busy;
 	bool				running;
 	bool				rt;
