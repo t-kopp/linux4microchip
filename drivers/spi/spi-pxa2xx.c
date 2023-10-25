@@ -37,6 +37,12 @@ MODULE_ALIAS("platform:pxa2xx-spi");
 
 #define TIMOUT_DFLT		1000
 
+/* define polling limits */
+static unsigned int polling_limit_us = 30;
+module_param(polling_limit_us, uint, 0664);
+MODULE_PARM_DESC(polling_limit_us,
+		 "time in us to run a transfer in polling mode\n");
+
 /*
  * for testing SSCR1 changes that require SSP restart, basically
  * everything except the service and interrupt enables, the pxa270 developer
@@ -529,8 +535,9 @@ static int null_reader(struct driver_data *drv_data)
 
 static int u8_writer(struct driver_data *drv_data)
 {
-	if (pxa2xx_spi_txfifo_full(drv_data)
-		|| (drv_data->tx == drv_data->tx_end))
+	// if (pxa2xx_spi_txfifo_full(drv_data)
+	// 	|| (drv_data->tx == drv_data->tx_end))
+	if (drv_data->tx == drv_data->tx_end)
 		return 0;
 
 	pxa2xx_spi_write(drv_data, SSDR, *(u8 *)(drv_data->tx));
@@ -602,19 +609,19 @@ static void reset_sccr1(struct driver_data *drv_data)
 		spi_get_ctldata(drv_data->controller->cur_msg->spi);
 	u32 sccr1_reg;
 
-	sccr1_reg = pxa2xx_spi_read(drv_data, SSCR1) & ~drv_data->int_cr1;
-	switch (drv_data->ssp_type) {
-	case QUARK_X1000_SSP:
-		sccr1_reg &= ~QUARK_X1000_SSCR1_RFT;
-		break;
-	case CE4100_SSP:
-		sccr1_reg &= ~CE4100_SSCR1_RFT;
-		break;
-	default:
-		sccr1_reg &= ~SSCR1_RFT;
-		break;
-	}
-	sccr1_reg |= chip->threshold;
+	// sccr1_reg = pxa2xx_spi_read(drv_data, SSCR1) & ~drv_data->int_cr1;
+	// switch (drv_data->ssp_type) {
+	// case QUARK_X1000_SSP:
+	// 	sccr1_reg &= ~QUARK_X1000_SSCR1_RFT;
+	// 	break;
+	// case CE4100_SSP:
+	// 	sccr1_reg &= ~CE4100_SSCR1_RFT;
+	// 	break;
+	// default:
+	// 	sccr1_reg &= ~SSCR1_RFT;
+	// 	break;
+	// }
+	sccr1_reg |= chip->cr1 | chip->threshold;
 	pxa2xx_spi_write(drv_data, SSCR1, sccr1_reg);
 }
 
@@ -678,6 +685,8 @@ static irqreturn_t interrupt_transfer(struct driver_data *drv_data)
 		}
 	} while (drv_data->write(drv_data));
 
+
+
 	if (drv_data->read(drv_data)) {
 		int_transfer_complete(drv_data);
 		return IRQ_HANDLED;
@@ -722,6 +731,47 @@ static irqreturn_t interrupt_transfer(struct driver_data *drv_data)
 	return IRQ_HANDLED;
 }
 
+static int spi_calculate_timeout(struct spi_transfer *xfer)
+{
+	unsigned long timeout = 0;
+
+	/* Time with actual data transfer and CS change delay related to HW */
+	timeout = (8 + 4) * xfer->len / xfer->speed_hz;
+
+	/* Add extra second for scheduler related activities */
+	timeout += 1;
+
+	/* Double calculated timeout */
+	return msecs_to_jiffies(2 * timeout * MSEC_PER_SEC);
+}
+
+
+static int polling_transfer(struct driver_data *drv_data, unsigned long timeout)
+{
+	while(drv_data->write(drv_data));
+
+	// timeout = timeout + jiffies;
+
+	while(drv_data->rx != drv_data->rx_end) {
+		// if  (time_after(jiffies, timeout)) {
+		// 				dev_err_ratelimited(&drv_data->pdev->dev,
+		// 			    "timeout period reached: jiffies: %lu- falling back to interrupt mode\n",
+		// 			    jiffies - timeout);
+		// 				return 0;
+		// }
+		drv_data->read(drv_data);
+	}
+
+	/* Clear and disable interrupts */
+	write_SSSR_CS(drv_data, drv_data->clear_sr);
+	reset_sccr1(drv_data);
+	if (!pxa25x_ssp_comp(drv_data))
+		pxa2xx_spi_write(drv_data, SSTO, 0);
+
+	return 0;
+}
+
+
 static void handle_bad_msg(struct driver_data *drv_data)
 {
 	pxa2xx_spi_off(drv_data);
@@ -760,6 +810,9 @@ static irqreturn_t ssp_int(int irq, void *dev_id)
 	status = pxa2xx_spi_read(drv_data, SSSR);
 	if (status == ~0)
 		return IRQ_NONE;
+
+			// dev_err(&drv_data->pdev->dev,
+			// 		    "interrupt called\n");
 
 	sccr1_reg = pxa2xx_spi_read(drv_data, SSCR1);
 
@@ -1042,7 +1095,7 @@ static int pxa2xx_spi_transfer_one(struct spi_controller *controller,
 
 	dma_mapped = controller->can_dma &&
 		     controller->can_dma(controller, spi, transfer) &&
-		     controller->cur_msg_mapped;
+		     controller->cur_msg_mapped && transfer->len > 32;
 	if (dma_mapped) {
 
 		/* Ensure we have the correct interrupt handler */
@@ -1058,6 +1111,7 @@ static int pxa2xx_spi_transfer_one(struct spi_controller *controller,
 
 		pxa2xx_spi_dma_start(drv_data);
 	} else {
+
 		/* Ensure we have the correct interrupt handler	*/
 		drv_data->transfer_handler = interrupt_transfer;
 
@@ -1134,6 +1188,15 @@ static int pxa2xx_spi_transfer_one(struct spi_controller *controller,
 			gpiod_set_value(drv_data->gpiod_ready, 1);
 			udelay(1);
 			gpiod_set_value(drv_data->gpiod_ready, 0);
+		}
+	}
+
+	if (!dma_mapped) {
+		if (transfer->len < 33) {
+			int timeout = spi_calculate_timeout(transfer);
+			// cr1 = chip->cr1 | chip->threshold | drv_data->int_cr1;
+			write_SSSR_CS(drv_data, drv_data->clear_sr);
+			return polling_transfer(drv_data, timeout);
 		}
 	}
 
@@ -1351,7 +1414,6 @@ static int setup(struct spi_device *spi)
 		chip->cr1 |= SSCR1_SFRMDIR;
 		chip->cr1 |= SSCR1_SPH;
 	}
-
 	chip->lpss_rx_threshold = SSIRF_RxThresh(rx_thres);
 	chip->lpss_tx_threshold = SSITF_TxLoThresh(tx_thres)
 				| SSITF_TxHiThresh(tx_hi_thres);
